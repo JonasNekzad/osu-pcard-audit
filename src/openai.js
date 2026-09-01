@@ -42,6 +42,146 @@ Rules:
 9. Provide a brief plain-English explanation of what the query measures.
 `;
 
+function dollarNumber(text) {
+  return Number(String(text).replace(/[$,\s]/g, ''));
+}
+
+function sqlString(value) {
+  return `'${String(value).replaceAll("'", "''")}'`;
+}
+
+function extractYear(question) {
+  const match = question.match(/\b(201[0-4])\b/);
+  return match ? Number(match[1]) : 2014;
+}
+
+function extractLimit(question, fallback = 200) {
+  const match = question.match(/\b(?:top|first|largest|highest)\s+(\d{1,3})\b/i);
+  if (!match) return fallback;
+  return Math.max(1, Math.min(500, Number(match[1])));
+}
+
+function extractRange(question) {
+  const match = question.match(/\bbetween\s+(\$?[\d,]+(?:\.\d+)?)\s+and\s+(\$?[\d,]+(?:\.\d+)?)/i);
+  if (!match) return null;
+  const low = dollarNumber(match[1]);
+  const high = dollarNumber(match[2]);
+  return Number.isFinite(low) && Number.isFinite(high)
+    ? [Math.min(low, high), Math.max(low, high)]
+    : null;
+}
+
+function extractThreshold(question) {
+  const match = question.match(/\b(more than|over|above|greater than|at least|less than|under|below|at most)\s+(\$?[\d,]+(?:\.\d+)?)/i);
+  if (!match) return null;
+  const amount = dollarNumber(match[2]);
+  if (!Number.isFinite(amount)) return null;
+  const phrase = match[1].toLowerCase();
+  const operator = ['less than', 'under', 'below'].includes(phrase)
+    ? '<'
+    : phrase === 'at most'
+      ? '<='
+      : phrase === 'at least'
+        ? '>='
+        : '>';
+  return { operator, amount };
+}
+
+function extractKeyword(question, field) {
+  const quoted = question.match(new RegExp(`${field}\\s+(?:contains?|matching|like)?\\s*[“\"']([^”\"']+)[”\"']`, 'i'));
+  if (quoted) return quoted[1].trim();
+
+  const direct = question.match(new RegExp(`${field}\\s+(?:contains?|matching|like|named|is|=)\\s+(.+?)(?:\\s+in\\s+201[0-4]|\\s+for\\s+201[0-4]|\\s+sorted|\\s+order(?:ed)?|$)`, 'i'));
+  if (!direct) return null;
+  return direct[1].replace(/\btransactions?\b/gi, '').trim();
+}
+
+function transactionColumns() {
+  return 'ID, Amount, FullName, Description, Vendor, TransactionDate, PostedDate, MCC';
+}
+
+function generateLocalAuditSql(question) {
+  const normalized = String(question || '').trim();
+  const year = extractYear(normalized);
+  const limit = extractLimit(normalized);
+  const range = extractRange(normalized);
+  const threshold = extractThreshold(normalized);
+  const wantsCredits = /\b(credit|credits|refund|refunds|return|returns|negative)\b/i.test(normalized);
+  const wantsAllAmounts = /\b(net|including credits|including returns|all amounts)\b/i.test(normalized);
+  const wantsPositive = /\b(positive|charge|charges|purchase|purchases)\b/i.test(normalized);
+  const amountPredicate = wantsAllAmounts ? '' : wantsCredits ? ' AND Amount < 0' : wantsPositive ? ' AND Amount > 0' : '';
+
+  const vendorKeyword = extractKeyword(normalized, 'vendor');
+  const descriptionKeyword = extractKeyword(normalized, 'description');
+  const keywordPredicate = vendorKeyword
+    ? ` AND lower(coalesce(Vendor, '')) LIKE lower(${sqlString(`%${vendorKeyword}%`)})`
+    : descriptionKeyword
+      ? ` AND lower(coalesce(Description, '')) LIKE lower(${sqlString(`%${descriptionKeyword}%`)})`
+      : '';
+
+  const group = /\b(by|per)\s+employee\b|\bemployees?\s+(?:spent|spending|totals?)\b/i.test(normalized)
+    ? { column: 'FullName', label: 'Employee' }
+    : /\b(by|per)\s+vendor\b|\btop\s+\d*\s*vendors?\b/i.test(normalized)
+      ? { column: 'Vendor', label: 'Vendor' }
+      : /\b(by|per)\s+mcc\b|merchant category/i.test(normalized)
+        ? { column: 'MCC', label: 'MCC' }
+        : /\b(by|per)\s+month\b|monthly/i.test(normalized)
+          ? { column: 'Month', label: 'Month' }
+          : /\b(by|per)\s+year\b|yearly|annual trend/i.test(normalized)
+            ? { column: 'Year', label: 'Year' }
+            : null;
+
+  const wantsCount = /\bhow many\b|\bcount\b|\bnumber of\b/i.test(normalized);
+  const wantsAverage = /\baverage\b|\bmean\b/i.test(normalized);
+  const wantsAggregate = Boolean(group) || /\b(total|totals|spent|spending|summarize|summary)\b/i.test(normalized);
+
+  if (group && wantsAggregate) {
+    const yearPredicate = group.column === 'Year' && !/\b201[0-4]\b/.test(normalized) ? '1 = 1' : `Year = ${year}`;
+    const metric = wantsCount
+      ? 'COUNT(*) AS TransactionCount'
+      : wantsAverage
+        ? 'ROUND(AVG(Amount), 2) AS AverageAmount'
+        : 'ROUND(SUM(Amount), 2) AS TotalAmount';
+    const metricAlias = wantsCount ? 'TransactionCount' : wantsAverage ? 'AverageAmount' : 'TotalAmount';
+    const having = threshold ? ` HAVING ${metricAlias} ${threshold.operator} ${threshold.amount}` : '';
+    const order = group.column === 'Month' || group.column === 'Year'
+      ? `${group.column} ASC`
+      : `${metricAlias} DESC`;
+    const sql = `SELECT ${group.column} AS ${group.label}, ${metric}\n` +
+      `FROM pcards\nWHERE ${yearPredicate}${amountPredicate}${keywordPredicate}\n` +
+      `GROUP BY ${group.column}${having}\nORDER BY ${order}\nLIMIT ${limit}`;
+    return {
+      sql,
+      explanation: `Groups ${wantsCredits ? 'credits/returns' : amountPredicate ? 'positive charges' : 'net activity'} by ${group.label.toLowerCase()} and reports the requested ${wantsCount ? 'transaction count' : wantsAverage ? 'average amount' : 'total amount'}.`
+    };
+  }
+
+  const predicates = [`Year = ${year}`];
+  if (range) predicates.push(`Amount BETWEEN ${range[0]} AND ${range[1]}`);
+  else if (threshold) predicates.push(`Amount ${threshold.operator} ${threshold.amount}`);
+  if (!range && !threshold && amountPredicate) predicates.push(amountPredicate.replace(/^ AND /, ''));
+  if (keywordPredicate) predicates.push(keywordPredicate.replace(/^ AND /, ''));
+
+  if (wantsCount) {
+    return {
+      sql: `SELECT COUNT(*) AS TransactionCount\nFROM pcards\nWHERE ${predicates.join(' AND ')}`,
+      explanation: `Counts matching ${year} transactions using the amount and keyword conditions found in the question.`
+    };
+  }
+
+  if (range || threshold || vendorKeyword || descriptionKeyword || /\b(transaction|transactions|charges|purchases|largest|highest)\b/i.test(normalized)) {
+    return {
+      sql: `SELECT ${transactionColumns()}\nFROM pcards\nWHERE ${predicates.join(' AND ')}\nORDER BY Amount ${wantsCredits ? 'ASC' : 'DESC'}, ID ASC\nLIMIT ${limit}`,
+      explanation: `Returns transaction-level details for ${year}, ordered by amount, using the conditions identified in the question.`
+    };
+  }
+
+  return {
+    sql: `SELECT 'Try asking for transactions above a dollar amount, spending by employee, totals by vendor, monthly spending, MCC summaries, credits, or a vendor/description keyword.' AS Message`,
+    explanation: 'The question did not contain a supported audit measure. The result suggests examples that the local natural-language parser can answer.'
+  };
+}
+
 function extractOutputText(response) {
   for (const item of response.output || []) {
     for (const content of item.content || []) {
@@ -56,9 +196,7 @@ function extractOutputText(response) {
 async function generateAuditSql(question) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
-    const error = new Error('Natural-language questions require an OPENAI_API_KEY environment variable.');
-    error.statusCode = 503;
-    throw error;
+    return generateLocalAuditSql(question);
   }
 
   const payload = {
@@ -104,4 +242,4 @@ async function generateAuditSql(question) {
   return JSON.parse(extractOutputText(data));
 }
 
-module.exports = { generateAuditSql };
+module.exports = { generateAuditSql, generateLocalAuditSql };
