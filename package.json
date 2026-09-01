@@ -1,0 +1,14 @@
+{
+  "name": "osu-pcard-audit-console",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Two-tab audit website for exploring OSU P-card transactions.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

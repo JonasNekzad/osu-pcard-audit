@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Read-only audit console for Oklahoma State University P-card transactions.">
+    <title>OSU P-card Audit Console</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="header-content">
+        <div>
+          <p class="eyebrow">Internal audit analytics</p>
+          <h1>OSU P-card Audit Console</h1>
+          <p class="subtitle">Explore transactions, surface exceptions, and document follow-up work.</p>
+        </div>
+        <div class="risk-badge"><span></span> Risk indicators only</div>
+      </div>
+    </header>
+
+    <main>
+      <nav class="tabs" aria-label="Audit tools">
+        <button class="tab active" data-tab="ask" aria-selected="true">Ask the database</button>
+        <button class="tab" data-tab="dashboard" aria-selected="false">Prohibited-purchase dashboard</button>
+      </nav>
+
+      <section id="ask-panel" class="tab-panel active" aria-labelledby="ask-title">
+        <div class="intro-grid">
+          <div>
+            <p class="section-kicker">Natural-language analysis</p>
+            <h2 id="ask-title">Ask an audit question</h2>
+            <p>Describe the population you want to examine. The application generates and runs one read-only SQLite query, then shows both the query and the results.</p>
+          </div>
+          <aside class="instruction-card">
+            <strong>Good questions are specific</strong>
+            <p>Include a year, population, threshold, grouping, and sort order when they matter.</p>
+          </aside>
+        </div>
+
+        <div id="nl-config-warning" class="notice warning hidden" role="status">
+          Natural-language analysis is not configured. Add <code>OPENAI_API_KEY</code> to the deployment environment; never place the key in source code.
+        </div>
+
+        <form id="ask-form" class="card ask-card">
+          <label for="question">Audit question</label>
+          <textarea id="question" name="question" rows="4" maxlength="500" placeholder="Example: Which employees spent more than $50,000 in 2014, sorted from highest to lowest?" required></textarea>
+          <div class="example-row" aria-label="Example questions">
+            <button type="button" class="example-chip">Show 2014 spending by employee above $50,000</button>
+            <button type="button" class="example-chip">Find positive 2014 charges between $4,900 and $5,000</button>
+            <button type="button" class="example-chip">Summarize 2014 purchases by MCC and total amount</button>
+          </div>
+          <div class="form-actions">
+            <button class="primary-button" type="submit">Run analysis</button>
+            <span class="form-hint">Maximum 500 displayed rows</span>
+          </div>
+        </form>
+
+        <div id="ask-status" class="status" aria-live="polite"></div>
+        <section id="ask-results" class="results-region hidden" aria-label="Natural-language query results">
+          <div class="result-heading">
+            <div>
+              <p class="section-kicker">Generated analysis</p>
+              <h3>Query and results</h3>
+            </div>
+            <span id="ask-row-count" class="count-pill"></span>
+          </div>
+          <p id="ask-explanation" class="explanation"></p>
+          <details class="sql-details">
+            <summary>View generated SQL</summary>
+            <pre><code id="ask-sql"></code></pre>
+          </details>
+          <div id="ask-table"></div>
+        </section>
+      </section>
+
+      <section id="dashboard-panel" class="tab-panel" aria-labelledby="dashboard-title">
+        <div class="intro-grid">
+          <div>
+            <p class="section-kicker">Control-deviation screening</p>
+            <h2 id="dashboard-title">Search prohibited purchases</h2>
+            <p>Select a year, choose either description or vendor search, and enter a keyword. Review every match against receipts, approvals, business purpose, and other supporting evidence before drawing a conclusion.</p>
+          </div>
+          <aside class="instruction-card">
+            <strong>How to use the dashboard</strong>
+            <ol>
+              <li>Select the year.</li>
+              <li>Choose a search field.</li>
+              <li>Enter a relevant keyword.</li>
+              <li>Export matches for follow-up.</li>
+            </ol>
+          </aside>
+        </div>
+
+        <div class="year-bar">
+          <label for="year-select">Year to search</label>
+          <select id="year-select"></select>
+        </div>
+
+        <div class="search-grid">
+          <form class="card search-card" data-field="Description">
+            <div class="search-card-number">01</div>
+            <p class="section-kicker">Description search</p>
+            <h3>Search transaction descriptions</h3>
+            <p>Use product or purpose keywords such as <em>alcohol</em>, <em>gift card</em>, <em>insurance</em>, or <em>membership</em>.</p>
+            <label for="description-keyword">Description keyword</label>
+            <div class="input-button-row">
+              <input id="description-keyword" name="keyword" type="search" minlength="2" maxlength="80" placeholder="e.g., alcohol" required>
+              <button type="submit" class="secondary-button">Search</button>
+            </div>
+          </form>
+
+          <form class="card search-card" data-field="Vendor">
+            <div class="search-card-number">02</div>
+            <p class="section-kicker">Vendor search</p>
+            <h3>Search merchant names</h3>
+            <p>Use merchant keywords such as <em>USPS</em>, <em>post office</em>, <em>liquor</em>, <em>insurance</em>, or <em>gift</em>.</p>
+            <label for="vendor-keyword">Vendor keyword</label>
+            <div class="input-button-row">
+              <input id="vendor-keyword" name="keyword" type="search" minlength="2" maxlength="80" placeholder="e.g., USPS" required>
+              <button type="submit" class="secondary-button">Search</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="keyword-panel">
+          <span>Suggested keywords</span>
+          <div class="keyword-chips">
+            <button type="button" data-keyword="alcohol">alcohol</button>
+            <button type="button" data-keyword="ATM">ATM</button>
+            <button type="button" data-keyword="decoration">decoration</button>
+            <button type="button" data-keyword="donation">donation</button>
+            <button type="button" data-keyword="gas">gas</button>
+            <button type="button" data-keyword="gift">gift</button>
+            <button type="button" data-keyword="insurance">insurance</button>
+            <button type="button" data-keyword="postage">postage</button>
+            <button type="button" data-keyword="membership">membership</button>
+            <button type="button" data-keyword="award">award</button>
+          </div>
+        </div>
+
+        <div id="dashboard-status" class="status" aria-live="polite"></div>
+        <section id="dashboard-results" class="results-region hidden" aria-label="Dashboard search results">
+          <div class="result-heading">
+            <div>
+              <p class="section-kicker">Search population</p>
+              <h3 id="dashboard-result-title">Results</h3>
+            </div>
+            <button id="download-csv" type="button" class="download-button">Download CSV</button>
+          </div>
+          <div class="metrics-grid">
+            <div class="metric"><span>Matches</span><strong id="metric-matches">0</strong></div>
+            <div class="metric"><span>Net amount</span><strong id="metric-amount">$0</strong></div>
+            <div class="metric"><span>Employees</span><strong id="metric-employees">0</strong></div>
+            <div class="metric"><span>Vendors</span><strong id="metric-vendors">0</strong></div>
+          </div>
+          <p id="dashboard-truncated" class="notice hidden"></p>
+          <div id="dashboard-table"></div>
+        </section>
+      </section>
+    </main>
+
+    <footer>
+      <p>Potential exceptions require corroborating evidence. A flagged transaction does not establish a control violation or fraud.</p>
+    </footer>
+
+    <script src="/app.js" defer></script>
+  </body>
+</html>

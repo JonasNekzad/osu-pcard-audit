@@ -1,0 +1,10 @@
+.env
+.DS_Store
+node_modules/
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+.streamlit/
+coverage/
+
