@@ -193,7 +193,8 @@ async function requestHandler(req, res) {
     if (req.method === 'GET' && pathname === '/api/meta') {
       return jsonResponse(res, 200, {
         years: getYears(),
-        naturalLanguageConfigured: Boolean(process.env.OPENAI_API_KEY)
+        naturalLanguageConfigured: true,
+        naturalLanguageMode: process.env.OPENAI_API_KEY ? 'openai' : 'local'
       });
     }
 
