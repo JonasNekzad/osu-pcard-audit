@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Compare three methods for answering questions from company policies.">
+  <title>Company Policy Assistant</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">▤</span><span><strong>Policy Lab</strong><small>Retrieval comparison</small></span></div>
+    <div class="dataset-pill">▦ 98 company policies</div>
+  </header>
+  <main class="shell">
+    <section class="query-panel" aria-labelledby="page-title">
+      <div class="eyebrow">Company policy assistant</div>
+      <h1 id="page-title">Ask once. Compare three answers.</h1>
+      <div class="intro">Test the same question against keyword search, a full-context Gemini model, and a vector-retrieval Gemini model.</div>
+      <form id="query-form" class="query-form">
+        <label for="policy-question">Policy question</label>
+        <div class="query-row">
+          <input id="policy-question" maxlength="400" value="How often are performance reviews conducted?" placeholder="Ask about leave, expenses, IT, conduct…">
+          <button id="compare-button" type="submit">⌕ <span>Compare</span></button>
+        </div>
+        <div id="form-error" class="form-error" role="alert" hidden></div>
+      </form>
+      <div class="samples" aria-label="Example questions">
+        <button type="button">How often are performance reviews conducted?</button>
+        <button type="button">Can I install any software on my work computer?</button>
+        <button type="button">How long are products covered by warranty?</button>
+        <button type="button">Does the company pay for my gym membership?</button>
+      </div>
+    </section>
+
+    <section class="results-section" aria-labelledby="results-title">
+      <div class="section-heading"><div><div class="eyebrow">Side-by-side evidence</div><h2 id="results-title">Three retrieval approaches</h2></div><div id="question-label" class="question-label"></div></div>
+      <div id="method-grid" class="method-grid">
+        <article class="method-card empty-card"><span class="method-number">01</span><h3>Rules-based search</h3><div class="approach">Weighted keywords</div><div class="empty-description">Fast and transparent, but wording matters.</div></article>
+        <article class="method-card empty-card"><span class="method-number">02</span><h3>LLM without vector index</h3><div class="approach">All 98 policies</div><div class="empty-description">Broad context with higher token use.</div></article>
+        <article class="method-card empty-card"><span class="method-number">03</span><h3>LLM with vector index</h3><div class="approach">Top 5 retrieved policies</div><div class="empty-description">Focused context with lower token use.</div></article>
+      </div>
+      <div id="results-table-wrap" class="comparison-table-wrap" hidden>
+        <table class="comparison-table"><thead><tr><th>Method</th><th>Answer and policy</th><th>Response time</th><th>Tokens</th><th>Unsupported answer check</th></tr></thead><tbody id="results-body"></tbody></table>
+      </div>
+    </section>
+
+    <section class="analysis-section" aria-labelledby="analysis-title">
+      <div class="analysis-icon" aria-hidden="true">✓</div>
+      <div><div class="eyebrow">Two-paragraph comparison</div><h2 id="analysis-title">Recommended approach</h2>
+        <p>Rules-based search is the fastest and uses no model tokens, but it can miss a relevant policy when the question uses different wording. The LLM without a vector index can interpret natural language, yet sending all 98 policies on every request increases token use and response time. The unsupported-answer check flags a response when its policy title or supporting sentence cannot be verified.</p>
+        <p>The preferred approach is the LLM with the vector index because it retrieves the five most relevant policies before generating an answer. This keeps the prompt focused, reduces token use, and makes the cited policy easier to verify.</p>
+      </div>
+    </section>
+  </main>
+  <footer><span>Company Policy Assistant</span><span>Student project · Source dataset: company_policies.csv</span></footer>
+  <script src="/app.js" defer></script>
+</body>
+</html>
