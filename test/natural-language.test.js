@@ -3,7 +3,38 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { generateLocalAuditSql } = require('../src/openai');
+const { generateAuditSql, generateLocalAuditSql } = require('../src/gemini');
+
+test('Gemini request uses server-side key and structured JSON output', async () => {
+  const originalKey = process.env.GEMINI_API_KEY;
+  const originalFetch = global.fetch;
+  process.env.GEMINI_API_KEY = 'test-only-key';
+  global.fetch = async (url, options) => {
+    assert.match(String(url), /gemini-3\.5-flash-lite:generateContent$/);
+    assert.equal(options.headers['x-goog-api-key'], 'test-only-key');
+    const body = JSON.parse(options.body);
+    assert.equal(body.generationConfig.responseMimeType, 'application/json');
+    assert.equal(body.generationConfig.responseJsonSchema.additionalProperties, false);
+    return {
+      ok: true,
+      json: async () => ({
+        candidates: [{ content: { parts: [{ text: JSON.stringify({
+          sql: 'SELECT COUNT(*) AS TransactionCount FROM pcards',
+          explanation: 'Counts all transactions.'
+        }) }] } }]
+      })
+    };
+  };
+
+  try {
+    const result = await generateAuditSql('How many transactions are there?');
+    assert.equal(result.sql, 'SELECT COUNT(*) AS TransactionCount FROM pcards');
+  } finally {
+    global.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = originalKey;
+  }
+});
 const { assertSafeReadOnlySql } = require('../src/security');
 
 test('groups 2014 spending by employee above a threshold', () => {
