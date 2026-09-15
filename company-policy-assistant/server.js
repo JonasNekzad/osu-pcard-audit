@@ -75,7 +75,16 @@ function tokenize(value) {
     .map(stem);
 }
 
-const policies = parseCsv(fs.readFileSync(path.join(ROOT, 'data', 'company_policies.csv'), 'utf8'));
+const policyFilePath = process.env.POLICY_FILE_PATH || [
+  '/etc/secrets/company_policies.csv',
+  path.join(ROOT, 'data', 'company_policies.csv')
+].find((candidate) => fs.existsSync(candidate));
+
+if (!policyFilePath) {
+  throw new Error('Missing company_policies.csv. Add it as a Render Secret File named company_policies.csv.');
+}
+
+const policies = parseCsv(fs.readFileSync(policyFilePath, 'utf8'));
 
 function ruleRank(query, sourcePolicies, limit = 3) {
   const queryTokens = tokenize(query);
