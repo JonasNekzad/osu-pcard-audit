@@ -9,7 +9,7 @@ const zlib = require('node:zlib');
 const { pipeline } = require('node:stream/promises');
 const { DatabaseSync } = require('node:sqlite');
 
-const { generateAuditSql } = require('./src/openai');
+const { generateAuditSql } = require('./src/gemini');
 const { assertSafeReadOnlySql, escapeLikeTerm } = require('./src/security');
 
 const ROOT = __dirname;
@@ -194,7 +194,7 @@ async function requestHandler(req, res) {
       return jsonResponse(res, 200, {
         years: getYears(),
         naturalLanguageConfigured: true,
-        naturalLanguageMode: process.env.OPENAI_API_KEY ? 'openai' : 'local'
+        naturalLanguageMode: process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY ? 'gemini' : 'local'
       });
     }
 
