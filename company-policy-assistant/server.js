@@ -20,6 +20,8 @@ const STOP_WORDS = new Set([
   'we', 'what', 'when', 'where', 'which', 'who', 'with', 'work', 'you', 'your'
 ]);
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 function parseCsv(value) {
   const records = [];
   let row = [];
@@ -123,17 +125,23 @@ function embeddingValues(payload) {
 }
 
 async function geminiEmbedding(text, apiKey, model, taskType) {
-  const response = await fetch(`${GEMINI_API_ROOT}/${encodeURIComponent(model)}:embedContent`, {
-    method: 'POST',
-    headers: { 'x-goog-api-key': apiKey, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      content: { parts: [{ text }] },
-      taskType
-    })
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload?.error?.message || `Gemini embedding request failed (${response.status}).`);
-  return embeddingValues(payload);
+  let lastError = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const response = await fetch(`${GEMINI_API_ROOT}/${encodeURIComponent(model)}:embedContent`, {
+      method: 'POST',
+      headers: { 'x-goog-api-key': apiKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        content: { parts: [{ text }] },
+        taskType
+      })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (response.ok) return embeddingValues(payload);
+    lastError = new Error(payload?.error?.message || `Gemini embedding request failed (${response.status}).`);
+    if (response.status !== 429 && response.status < 500) break;
+    await sleep(750 * (attempt + 1));
+  }
+  throw lastError || new Error('Gemini embedding request failed.');
 }
 
 function cosineSimilarity(a, b) {
@@ -150,10 +158,15 @@ function cosineSimilarity(a, b) {
 }
 
 async function buildPolicyEmbeddingIndex(apiKey, model) {
-  return Promise.all(policies.map(async (policy) => ({
-    policy,
-    embedding: await geminiEmbedding(policyEmbeddingText(policy), apiKey, model, 'RETRIEVAL_DOCUMENT')
-  })));
+  const index = [];
+  for (const policy of policies) {
+    index.push({
+      policy,
+      embedding: await geminiEmbedding(policyEmbeddingText(policy), apiKey, model, 'RETRIEVAL_DOCUMENT')
+    });
+    await sleep(Number(process.env.GEMINI_EMBEDDING_DELAY_MS || 350));
+  }
+  return index;
 }
 
 async function vectorRank(query, sourcePolicies, limit = 5) {
