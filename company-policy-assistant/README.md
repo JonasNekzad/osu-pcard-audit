@@ -1,11 +1,12 @@
 # Company Policy Assistant — Render deployment
 
-This is the Render-compatible deployment of the Company Policy Assistant. It compares weighted keyword retrieval, Gemini with the full 98-policy database, and Gemini with five TF-IDF-retrieved policies.
+This is the Render-compatible deployment of the Company Policy Assistant. It compares weighted keyword retrieval, Gemini with the full 98-policy database, and Gemini with five policies retrieved by `gemini-embedding-001`.
 
 Required Render environment variables:
 
 - `GEMINI_API_KEY` — add as a secret.
 - `GEMINI_MODEL` — `gemini-3.5-flash-lite`.
+- `GEMINI_EMBEDDING_MODEL` — `gemini-embedding-001`.
 
 Keep the policy dataset private by adding a Render Secret File:
 
