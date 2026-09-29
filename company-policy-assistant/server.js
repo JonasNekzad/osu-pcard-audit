@@ -139,7 +139,7 @@ async function geminiEmbedding(text, apiKey, model, taskType) {
     if (response.ok) return embeddingValues(payload);
     lastError = new Error(payload?.error?.message || `Gemini embedding request failed (${response.status}).`);
     if (response.status !== 429 && response.status < 500) break;
-    await sleep(750 * (attempt + 1));
+    await sleep(1500 * (attempt + 1));
   }
   throw lastError || new Error('Gemini embedding request failed.');
 }
@@ -164,7 +164,7 @@ async function buildPolicyEmbeddingIndex(apiKey, model) {
       policy,
       embedding: await geminiEmbedding(policyEmbeddingText(policy), apiKey, model, 'RETRIEVAL_DOCUMENT')
     });
-    await sleep(Number(process.env.GEMINI_EMBEDDING_DELAY_MS || 350));
+    await sleep(Number(process.env.GEMINI_EMBEDDING_DELAY_MS || 850));
   }
   return index;
 }
