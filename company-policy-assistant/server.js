@@ -11,6 +11,7 @@ const PORT = Number(process.env.PORT || 3000);
 const MAX_BODY_BYTES = 20_000;
 const GEMINI_API_ROOT = 'https://generativelanguage.googleapis.com/v1beta/models';
 const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash-lite';
+const DEFAULT_GEMINI_EMBEDDING_MODEL = 'gemini-embedding-001';
 
 const STOP_WORDS = new Set([
   'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'can', 'do', 'does',
@@ -85,6 +86,7 @@ if (!policyFilePath) {
 }
 
 const policies = parseCsv(fs.readFileSync(policyFilePath, 'utf8'));
+let policyEmbeddingIndexPromise = null;
 
 function ruleRank(query, sourcePolicies, limit = 3) {
   const queryTokens = tokenize(query);
@@ -103,32 +105,72 @@ function ruleRank(query, sourcePolicies, limit = 3) {
   }).sort((a, b) => b.score - a.score || a.policy.title.localeCompare(b.policy.title)).slice(0, limit);
 }
 
-function vectorRank(query, sourcePolicies, limit = 5) {
-  const documents = sourcePolicies.map((policy) => tokenize([
-    policy.title, policy.title, policy.title, policy.category,
-    policy.category, policy.department, policy.policyText
-  ].join(' ')));
-  const documentFrequency = new Map();
-  for (const tokens of documents) {
-    for (const token of new Set(tokens)) {
-      documentFrequency.set(token, (documentFrequency.get(token) || 0) + 1);
-    }
+function policyEmbeddingText(policy) {
+  return [
+    `Title: ${policy.title}`,
+    `Department: ${policy.department}`,
+    `Category: ${policy.category}`,
+    `Policy: ${policy.policyText}`
+  ].join('\n');
+}
+
+function embeddingValues(payload) {
+  const values = payload.embedding?.values;
+  if (!Array.isArray(values) || !values.length) {
+    throw new Error('Gemini returned no embedding values.');
   }
-  const idf = (term) => Math.log((sourcePolicies.length + 1) /
-    ((documentFrequency.get(term) || 0) + 1)) + 1;
-  const makeVector = (tokens) => {
-    const counts = new Map();
-    for (const token of tokens) counts.set(token, (counts.get(token) || 0) + 1);
-    return new Map([...counts].map(([term, count]) => [term, (count / Math.max(tokens.length, 1)) * idf(term)]));
-  };
-  const queryVector = makeVector(tokenize(query));
-  const queryNorm = Math.sqrt([...queryVector.values()].reduce((sum, value) => sum + value * value, 0));
-  return sourcePolicies.map((policy, index) => {
-    const documentVector = makeVector(documents[index]);
-    const dot = [...queryVector].reduce((sum, [term, value]) => sum + value * (documentVector.get(term) || 0), 0);
-    const documentNorm = Math.sqrt([...documentVector.values()].reduce((sum, value) => sum + value * value, 0));
-    return { policy, score: queryNorm && documentNorm ? dot / (queryNorm * documentNorm) : 0 };
-  }).sort((a, b) => b.score - a.score || a.policy.title.localeCompare(b.policy.title)).slice(0, limit);
+  return values.map(Number);
+}
+
+async function geminiEmbedding(text, apiKey, model, taskType) {
+  const response = await fetch(`${GEMINI_API_ROOT}/${encodeURIComponent(model)}:embedContent`, {
+    method: 'POST',
+    headers: { 'x-goog-api-key': apiKey, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      content: { parts: [{ text }] },
+      taskType
+    })
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload?.error?.message || `Gemini embedding request failed (${response.status}).`);
+  return embeddingValues(payload);
+}
+
+function cosineSimilarity(a, b) {
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
+  const length = Math.min(a.length, b.length);
+  for (let i = 0; i < length; i += 1) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  return normA && normB ? dot / (Math.sqrt(normA) * Math.sqrt(normB)) : 0;
+}
+
+async function buildPolicyEmbeddingIndex(apiKey, model) {
+  return Promise.all(policies.map(async (policy) => ({
+    policy,
+    embedding: await geminiEmbedding(policyEmbeddingText(policy), apiKey, model, 'RETRIEVAL_DOCUMENT')
+  })));
+}
+
+async function vectorRank(query, sourcePolicies, limit = 5) {
+  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+  if (!apiKey) throw new Error('Gemini embeddings require GEMINI_API_KEY.');
+  const model = process.env.GEMINI_EMBEDDING_MODEL || DEFAULT_GEMINI_EMBEDDING_MODEL;
+  policyEmbeddingIndexPromise ||= buildPolicyEmbeddingIndex(apiKey, model);
+  const [queryEmbedding, policyIndex] = await Promise.all([
+    geminiEmbedding(query, apiKey, model, 'RETRIEVAL_QUERY'),
+    policyEmbeddingIndexPromise
+  ]);
+  const allowedPolicies = new Set(sourcePolicies);
+  return policyIndex
+    .filter((entry) => allowedPolicies.has(entry.policy))
+    .map((entry) => ({ policy: entry.policy, score: cosineSimilarity(queryEmbedding, entry.embedding) }))
+    .sort((a, b) => b.score - a.score || a.policy.title.localeCompare(b.policy.title))
+    .slice(0, limit);
 }
 
 function rulesBasedResult(query) {
@@ -291,10 +333,25 @@ async function handler(req, res) {
       if (question.length < 3 || question.length > 400) {
         throw Object.assign(new Error('Enter a policy question between 3 and 400 characters.'), { statusCode: 400 });
       }
-      const vectorPolicies = vectorRank(question, policies, 5).map((entry) => entry.policy);
+      let vectorPolicies = [];
+      let vectorError = null;
+      try {
+        vectorPolicies = (await vectorRank(question, policies, 5)).map((entry) => entry.policy);
+      } catch (error) {
+        vectorError = error;
+      }
       const [withoutVector, withVector] = await Promise.all([
         llmResult(question, policies, 'LLM without vector index', 'Full policy database in the prompt'),
-        llmResult(question, vectorPolicies, 'LLM with vector index', 'TF-IDF cosine retrieval, top 5 policies')
+        vectorError ? Promise.resolve({
+          method: 'LLM with vector index',
+          approach: 'Gemini Embedding 001 retrieval, top 5 policies',
+          answer: vectorError instanceof Error ? vectorError.message : 'Gemini embedding retrieval failed.',
+          relevantPolicy: 'Not evaluated',
+          responseTimeMs: 0,
+          tokenUse: 0,
+          unsupported: 'Not assessed',
+          status: 'error'
+        }) : llmResult(question, vectorPolicies, 'LLM with vector index', 'Gemini Embedding 001 retrieval, top 5 policies')
       ]);
       return jsonResponse(res, 200, {
         question, policyCount: policies.length,
